@@ -10,7 +10,7 @@ from config.config import shutdown_event, VALIDATOR_ID, HEARTBEAT_INTERVAL, VALI
 from state.state import validator_keys, known_validators
 from blockchain.blockchain import calculate_merkle_root
 from database.database import get_db,get_current_height
-from wallet.wallet import verify_transaction
+from wallet.wallet import verify_transaction_and_address
 
 kad_server = None
 
@@ -335,11 +335,7 @@ async def push_blocks(peer_ip, peer_port):
                         for output_ in outputs:
                             output_receiver = output_.get("receiver")
                             output_amount = output_.get("amount", "0")
-                            if output_receiver in (to_, ADMIN_ADDRESS):
-                                total_required += Decimal(output_amount)
-                            else:
-                                print(f"❌ Hack detected! Unauthorized output to {output_receiver}")
-                                raise ValueError("Hack detected, invalid transaction.")
+                            total_required += Decimal(output_amount)
 
                         print(total_authorized)
 
@@ -352,7 +348,7 @@ async def push_blocks(peer_ip, peer_port):
                                 raise ValueError("Invalid transaction: insufficient balance.")
                         
 
-                        if height == 0 or (verify_transaction(message_str, signature, pubkey) == True):
+                        if height == 0 or (verify_transaction_and_address(message_str, signature, pubkey) == True):
                             print("✅ Transaction validated successfully.")
                             batch = WriteBatch()
 

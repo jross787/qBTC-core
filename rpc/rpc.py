@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import Dict, List, Set, Optional
 from decimal import Decimal
 from config.config import ADMIN_ADDRESS
-from wallet.wallet import verify_transaction
+from wallet.wallet import verify_transaction_and_address
 from blockchain.blockchain import derive_qsafe_address,Block, bits_to_target, serialize_transaction,scriptpubkey_to_address, read_varint, parse_tx, validate_pow, sha256d, calculate_merkle_root
 from state.state import blockchain, state_lock, pending_transactions
 from rocksdict import WriteBatch
@@ -170,6 +170,7 @@ async def submit_block(request: Request, data: str) -> dict:
   
 
 
+    spent_in_block = set()
     for i, tx in enumerate(tx_list, start=1):
         raw_tx = serialize_transaction(tx)
         txid = sha256d(bytes.fromhex(raw_tx))[::-1].hex()
@@ -180,7 +181,7 @@ async def submit_block(request: Request, data: str) -> dict:
         message_str = tx["body"]["msg_str"]
         pubkey = tx["body"]["pubkey"]
         signature = tx["body"]["signature"]
-        if(verify_transaction(message_str, signature, pubkey) == True):
+        if verify_transaction_and_address(message_str, signature, pubkey):
 
             from_ = message_str.split(":")[0]
             to_ = message_str.split(":")[1]
@@ -193,22 +194,21 @@ async def submit_block(request: Request, data: str) -> dict:
 
             for input_ in inputs:
                 input_txid = input_["txid"]
-                input_sender = input_["sender"]
                 input_receiver = input_["receiver"]
                 input_amount = input_["amount"]
                 input_spent = input_["spent"]
-                if (input_receiver == from_):
-                    if (input_spent == False):
-                        total_available += Decimal(input_amount)
+                utxo_key_temp = f"utxo:{input_txid}:{input_['utxo_index']}".encode()
+                if utxo_key_temp in spent_in_block:
+                    raise HTTPException(400, "Double-spend in block")
+                if input_receiver == from_ and not input_spent:
+                    total_available += Decimal(input_amount)
+                    spent_in_block.add(utxo_key_temp)
             for output_ in outputs:
                 output_sender = output_["sender"]
                 output_receiver = output_["receiver"]
                 output_amount = output_["amount"]
                 output_spent = output_["spent"]
-                if output_receiver in (to_, ADMIN_ADDRESS):
-                    total_required += Decimal(output_amount)
-                else:
-                    raise HTTPException(status_code=400, detail="Output receiver is invalid")
+                total_required += Decimal(output_amount)
             miner_fee = (Decimal(total_authorised) * Decimal("0.001")).quantize(Decimal("0.00000001"))
             total_required = Decimal(total_authorised) + Decimal(miner_fee)
             if (total_required <= total_available):

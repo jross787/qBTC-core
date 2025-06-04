@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_DOWN
 from asyncio import StreamReader, StreamWriter
 from config.config import DEFAULT_GOSSIP_PORT, VALIDATOR_ID, ROCKSDB_PATH, ADMIN_ADDRESS,GENESIS_ADDRESS
 from state.state import pending_transactions, mined_blocks
-from wallet.wallet import verify_transaction
+from wallet.wallet import verify_transaction_and_address
 from database.database import get_db, get_current_height
 from blockchain.blockchain import Block ,sha256d, calculate_merkle_root, validate_pow
 from dht.dht import push_blocks
@@ -82,7 +82,7 @@ class GossipNode:
             print(msg)
             if tx_id in self.seen_tx or tx_id in pending_transactions:
                 return
-            if not verify_transaction(msg["body"]["msg_str"], msg["body"]["signature"], msg["body"]["pubkey"]):
+            if not verify_transaction_and_address(msg["body"]["msg_str"], msg["body"]["signature"], msg["body"]["pubkey"]):
                 return
             tx_lock = asyncio.Lock()
             async with tx_lock:
@@ -148,6 +148,7 @@ class GossipNode:
                 logging.info("[SYNC] Processing block height %s with hash %s", height, block_hash)
 
                 batch = WriteBatch()
+                spent_in_block = set()
 
 
                 for tx in full_transactions:
@@ -203,6 +204,8 @@ class GossipNode:
                             if "txid" not in inp:
                                 continue
                             spent_key = f"utxo:{inp['txid']}:{inp.get('utxo_index', 0)}".encode()
+                            if spent_key in spent_in_block:
+                                raise ValueError(f"UTXO {spent_key} double-spent in block")
                             utxo_raw = db.get(spent_key)
                             if not utxo_raw:
                                 raise ValueError(f"Missing UTXO for input: {spent_key}")
@@ -214,6 +217,7 @@ class GossipNode:
                                 raise ValueError(f"UTXO {spent_key} not owned by sender {from_}")
 
                             total_available += Decimal(utxo["amount"])
+                            spent_in_block.add(spent_key)
 
                         for out in outputs:
                             recv = out.get("receiver")
@@ -224,11 +228,7 @@ class GossipNode:
                             print("to:")
                             print(to_)
                             print(ADMIN_ADDRESS)
-                            if recv in (to_, ADMIN_ADDRESS):
-                                total_required += amt
-                            else:
-                                raise ValueError(
-                                    f"Hack detected: unauthorized output to {recv} in tx {txid}")
+                            total_required += amt
 
                         miner_fee = (Decimal(total_authorized) * Decimal("0.001")).quantize(
                             Decimal("0.00000001"), rounding=ROUND_DOWN)
@@ -238,8 +238,8 @@ class GossipNode:
                             raise ValueError(
                                 f"Invalid tx {txid}: balance {total_available} < required {grand_total_required}")
 
-                        if height != 1 and not verify_transaction(msg_str, signature, pubkey):
-                            raise ValueError(f"Signature check failed for tx {txid}")
+                        if height != 1 and not verify_transaction_and_address(msg_str, signature, pubkey):
+                            raise ValueError(f"Signature/address check failed for tx {txid}")
 
                         batch.put(f"tx:{txid}".encode(), json.dumps(tx).encode())
 
