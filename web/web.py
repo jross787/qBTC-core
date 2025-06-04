@@ -2,7 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from database.database import get_db, get_current_height
-from wallet.wallet import  verify_transaction
+from wallet.wallet import  verify_transaction_and_address
 from pydantic import BaseModel
 from typing import Dict, List, Set, Optional
 from decimal import Decimal, InvalidOperation
@@ -426,7 +426,7 @@ async def worker_endpoint(request: Request):
         sender_, receiver_, send_amount = parts[0], parts[1], parts[2]
         nonce = parts[3] if len(parts) > 3 else str(int(time.time() * 1000))
         
-        if not verify_transaction(message_str, signature_hex, pubkey_hex):
+        if not verify_transaction_and_address(message_str, signature_hex, pubkey_hex):
             return {"status": "error", "message": "Invalid signature"}
 
         inputs = []
